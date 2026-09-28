@@ -1,0 +1,9 @@
+{
+  "id": "qs8-panel",
+  "name": "QS-8 Score Panel",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Eight-dimension weighted chapter scoring: script-measured rhythm/specificity/dialogue metrics plus manual judgment sliders, total 0-10 with publish/revise verdicts.",
+  "author": "121212165",
+  "isDesktopOnly": true
+}
