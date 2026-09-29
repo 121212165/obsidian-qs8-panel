@@ -77,7 +77,7 @@ function verdict(total) {
 
 module.exports = class Qs8Panel extends Plugin {
   async onload() {
-    this.settings = Object.assign({}, { ledger: "QS8记分.md" }, await this.loadData());
+    this.settings = Object.assign({}, { ledger: "QS8记分.md", dimsJson: "" }, await this.loadData());
     this.addRibbonIcon("gauge", "QS-8 评分面板", () => this.openPanel());
     this.addCommand({ id: "open-panel", name: "打开评分面板（当前笔记）", callback: () => this.openPanel() });
     this.addSettingTab(new Qs8SettingTab(this.app, this));
@@ -85,6 +85,27 @@ module.exports = class Qs8Panel extends Plugin {
   }
   onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE); }
   async saveSettings() { await this.saveData(this.settings); }
+
+  /** 维度定义：设置 JSON 可整体替换（换领域=换维度表），坏配置回退内置 QS-8 */
+  dims() {
+    const fallback = [
+      { dim: "D1", label: "开局钩子", weight: 15, judge: true, desc: "前200字是否最快制造「必须读下去」的理由" },
+      { dim: "D2", label: "章末钩子", weight: 15, judge: true, desc: "结尾停在未闭合状态（悬念/转折/升级/倒计时）" },
+      { dim: "D3", label: "冲突与张力", weight: 20, judge: true, desc: "每千字有效冲突/欲望受阻次数" },
+      { dim: "D4", label: "节奏", weight: 10, judge: false, desc: "句长变异系数+短句占比" },
+      { dim: "D5", label: "具体性", weight: 15, judge: false, desc: "物件词/感官词密度，直述情绪扣分" },
+      { dim: "D6", label: "对话人味", weight: 10, judge: false, desc: "标签多样性+对话密度+口语长度" },
+      { dim: "D7", label: "信息密度", weight: 5, judge: true, desc: "每千字新信息量 vs 填充水词" },
+      { dim: "D8", label: "逻辑与动机", weight: 10, judge: true, desc: "因果闭合、无「突然」，行为有内在动机" },
+    ];
+    if (this.settings.dimsJson) {
+      try {
+        const arr = JSON.parse(this.settings.dimsJson);
+        if (Array.isArray(arr) && arr.length && arr.every((d) => d && d.dim && typeof d.weight === "number")) return arr;
+      } catch (e) {}
+    }
+    return fallback;
+  }
 
   async openPanel() {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -142,11 +163,13 @@ class Qs8View extends ItemView {
 
     // --- 人工判读滑条 ---
     const manual = {};
-    for (const [dim, name, desc] of JUDGE_DIMS) {
+    const allDims = this.plugin.dims();
+    const judgeDims = allDims.filter((d) => d.judge);
+    for (const { dim, label: name, weight, desc } of judgeDims) {
       const row = contentEl.createDiv();
       row.style.marginBottom = "4px";
       const label = row.createEl("label", {
-        text: `${dim} ${name}（${WEIGHTS[dim]}%）`,
+        text: `${dim} ${name}（${weight}%）`,
         attr: { style: "font-size:12px; font-weight:600; display:block;" },
       });
       label.title = desc;
@@ -159,7 +182,6 @@ class Qs8View extends ItemView {
 
     const totalEl = contentEl.createDiv();
     totalEl.style.cssText = "font-size:18px; font-weight:700; margin:8px 0;";
-    const autoAvg = 7; // 脚本项默认按锚点中位预估，可被手动覆盖滑条覆盖
 
     const recalc = () => {
       const get = (d) => {
@@ -168,9 +190,9 @@ class Qs8View extends ItemView {
         return 7; // 文本过短等无脚本分时按锚点中位兜底
       };
       const judged = {};
-      for (const [dim] of JUDGE_DIMS) judged[dim] = parseFloat(manual[dim].slider.value);
+      for (const { dim } of judgeDims) judged[dim] = parseFloat(manual[dim].slider.value);
       let sum = 0;
-      for (const d of Object.keys(WEIGHTS)) sum += get(d) * WEIGHTS[d];
+      for (const { dim, weight } of allDims) sum += get(dim) * weight;
       const total = Math.round(sum / 100 * 10) / 10;
       const [v, color] = verdict(total);
       totalEl.setText(`总分 ${total}/10 → ${v}`);
@@ -184,7 +206,7 @@ class Qs8View extends ItemView {
     const override = contentEl.createEl("details");
     override.createEl("summary", { text: "修正脚本项打分", attr: { style: "font-size:12px; cursor:pointer;" } });
     this._overrideInputs = {};
-    for (const d of ["D4", "D5", "D6"]) {
+    for (const d of allDims.filter((x) => !x.judge).map((x) => x.dim)) {
       const row = override.createDiv();
       row.style.cssText = "display:flex; gap:6px; align-items:center; font-size:12px; margin:2px 0;";
       row.createEl("span", { text: d });
@@ -216,5 +238,16 @@ class Qs8SettingTab extends PluginSettingTab {
         this.plugin.settings.ledger = v.trim() || "QS8记分.md";
         await this.plugin.saveSettings();
       }));
+    new Setting(containerEl).setName("维度与权重（JSON，可选）")
+      .setDesc('整体替换内置 QS-8 八维。格式 [{dim,label,weight,judge,desc}]，judge:true=人工滑条，false=脚本自动（D4节奏/D5具体性/D6对话）。换领域=换维度表，如议论文/周报/剧本')
+      .addTextArea((t) => {
+        t.setValue(this.plugin.settings.dimsJson || "");
+        t.inputEl.style.minHeight = "120px";
+        t.inputEl.style.fontFamily = "monospace";
+        t.onChange(async (v) => {
+          this.plugin.settings.dimsJson = v;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 }
