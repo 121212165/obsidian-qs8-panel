@@ -1,0 +1,24 @@
+name: smoke
+on:
+  push:
+    paths: ["main.js", "manifest.json", "versions.json"]
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 插件三件套校验
+        run: >
+          node -e "
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync('manifest.json','utf8'));
+          if(!m.id||!m.version||!m.minAppVersion) throw new Error('manifest 缺字段');
+          const v=JSON.parse(fs.readFileSync('versions.json','utf8'));
+          if(!v[m.version]) throw new Error('versions.json 缺 '+m.version+'（minAppVersion 必须登记）');
+          new Function(fs.readFileSync('main.js','utf8'));
+          console.log('smoke OK:', m.id+m.version);
+          "
